@@ -195,76 +195,521 @@ def process_pcap(pcap_path, thresholds):
         return None
 
 def create_dashboard(df, features, predictions, anomaly_scores, metrics, output_path='dashboard.html'):
-    """Create interactive Plotly dashboard."""
-    logging.info("Creating dashboard...")
+    """Create comprehensive interactive Plotly dashboard with modern design."""
+    logging.info("Creating enhanced dashboard...")
     
+    # Color scheme - professional cybersecurity theme
+    colors = {
+        'primary': '#1e3a8a',      # Deep blue
+        'success': '#10b981',      # Green
+        'warning': '#f59e0b',      # Amber
+        'danger': '#ef4444',       # Red
+        'info': '#3b82f6',         # Blue
+        'background': '#f8fafc',   # Light gray
+        'text': '#1e293b',         # Dark slate
+        'benign': '#22c55e',       # Light green
+        'attack': '#dc2626'        # Bright red
+    }
+    
+    # Create figure with custom layout
     fig = make_subplots(
-        rows=3, cols=2,
-        subplot_titles=('Traffic Volume Over Time', 'Entropy Analysis',
-                       'Anomaly Scores Distribution', 'Detection Timeline',
-                       'Performance Metrics', 'Attack Distribution'),
-        specs=[[{"type": "scatter"}, {"type": "scatter"}],
-               [{"type": "histogram"}, {"type": "scatter"}],
-               [{"type": "bar"}, {"type": "pie"}]]
+        rows=4, cols=3,
+        subplot_titles=(
+            'Traffic Volume Over Time', 'Detection Timeline', 'Anomaly Score Distribution',
+            'Source IP Entropy Analysis', 'Packet Rate Analysis', 'Feature Violations',
+            'Detection Confusion Matrix', 'Attack Type Distribution', 'ROC Curve Analysis',
+            'Temporal Attack Pattern', 'Feature Correlation Heatmap', 'Detection Confidence'
+        ),
+        specs=[
+            [{"type": "scatter", "colspan": 2}, None, {"type": "scatter"}],
+            [{"type": "scatter"}, {"type": "scatter"}, {"type": "bar"}],
+            [{"type": "heatmap"}, {"type": "pie"}, {"type": "scatter"}],
+            [{"type": "scatter", "colspan": 2}, None, {"type": "indicator"}]
+        ],
+        vertical_spacing=0.08,
+        horizontal_spacing=0.1
     )
     
-    sample_indices = np.linspace(0, len(df)-1, min(1000, len(df)), dtype=int)
+    # Sample data for better performance
+    sample_size = min(2000, len(df))
+    sample_indices = np.linspace(0, len(df)-1, sample_size, dtype=int)
     
+    # 1. Traffic Volume Over Time (Row 1, Col 1-2)
     if 'Flow Bytes/s' in features.columns:
+        traffic_data = features['Flow Bytes/s'].iloc[sample_indices]
+        attack_mask = predictions[sample_indices].astype(bool)
+        
         fig.add_trace(
-            go.Scatter(x=sample_indices, y=features['Flow Bytes/s'].iloc[sample_indices],
-                      mode='lines', name='Traffic Volume', line=dict(color='blue')),
+            go.Scatter(
+                x=sample_indices,
+                y=traffic_data,
+                mode='lines',
+                name='Benign Traffic',
+                line=dict(color=colors['benign'], width=1),
+                fill='tozeroy',
+                fillcolor=f"rgba(34, 197, 94, 0.1)"
+            ),
             row=1, col=1
         )
+        
+        if attack_mask.any():
+            fig.add_trace(
+                go.Scatter(
+                    x=sample_indices[attack_mask],
+                    y=traffic_data[attack_mask],
+                    mode='markers',
+                    name='Attack Traffic',
+                    marker=dict(color=colors['attack'], size=4, symbol='x')
+                ),
+                row=1, col=1
+            )
     
-    if 'src_ip_entropy' in features.columns:
-        fig.add_trace(
-            go.Scatter(x=sample_indices, 
-                      y=[features['src_ip_entropy'].iloc[0]] * len(sample_indices),
-                      mode='lines', name='Source IP Entropy', line=dict(color='green')),
-            row=1, col=2
-        )
-    
+    # 2. Detection Timeline (Row 1, Col 3)
+    detection_cumsum = np.cumsum(predictions[sample_indices])
     fig.add_trace(
-        go.Histogram(x=anomaly_scores, nbinsx=50, name='Anomaly Scores',
-                    marker=dict(color='orange')),
+        go.Scatter(
+            x=sample_indices,
+            y=detection_cumsum,
+            mode='lines',
+            name='Cumulative Detections',
+            line=dict(color=colors['danger'], width=2),
+            fill='tozeroy'
+        ),
+        row=1, col=3
+    )
+    
+    # 3. Anomaly Score Distribution (Row 2, Col 1)
+    fig.add_trace(
+        go.Histogram(
+            x=anomaly_scores,
+            nbinsx=30,
+            name='Anomaly Scores',
+            marker=dict(
+                color=anomaly_scores,
+                colorscale='RdYlGn_r',
+                showscale=True,
+                colorbar=dict(x=0.35, len=0.3, y=0.65)
+            ),
+            showlegend=False
+        ),
         row=2, col=1
     )
     
-    attack_mask = predictions.astype(bool)
-    fig.add_trace(
-        go.Scatter(x=sample_indices, y=predictions[sample_indices],
-                  mode='markers', name='Detections',
-                  marker=dict(color='red', size=3)),
-        row=2, col=2
-    )
+    # 4. Source IP Entropy (Row 2, Col 2)
+    if 'src_ip_entropy' in features.columns:
+        entropy_val = features['src_ip_entropy'].iloc[0]
+        fig.add_trace(
+            go.Scatter(
+                x=sample_indices,
+                y=[entropy_val] * len(sample_indices),
+                mode='lines',
+                name=f'IP Entropy: {entropy_val:.2f}',
+                line=dict(color=colors['info'], width=3),
+                fill='tozeroy'
+            ),
+            row=2, col=2
+        )
+        
+        # Add threshold line
+        threshold = 4.0
+        fig.add_trace(
+            go.Scatter(
+                x=sample_indices,
+                y=[threshold] * len(sample_indices),
+                mode='lines',
+                name='Normal Threshold',
+                line=dict(color=colors['success'], width=2, dash='dash'),
+                showlegend=False
+            ),
+            row=2, col=2
+        )
     
-    metrics_labels = ['Accuracy', 'Precision', 'Recall', 'F1 Score']
-    metrics_values = [metrics['accuracy'], metrics['precision'], 
-                     metrics['recall'], metrics['f1']]
+    # 5. Feature Violations (Row 2, Col 3)
+    if len(features.columns) > 0:
+        feature_cols = [col for col in features.columns if col not in ['src_ip_entropy', 'src_port_entropy']][:5]
+        violation_counts = []
+        for col in feature_cols:
+            if col in features.columns:
+                data = features[col].values
+                mean = np.mean(data)
+                std = np.std(data)
+                violations = np.sum((data > mean + 3*std) | (data < mean - 3*std))
+                violation_counts.append(violations)
+        
+        if violation_counts:
+            fig.add_trace(
+                go.Bar(
+                    x=[col.replace(' ', '<br>') for col in feature_cols],
+                    y=violation_counts,
+                    marker=dict(
+                        color=violation_counts,
+                        colorscale='Reds',
+                        showscale=False
+                    ),
+                    name='Violations',
+                    showlegend=False
+                ),
+                row=2, col=3
+            )
+    
+    # 6. Confusion Matrix (Row 3, Col 1)
+    cm = [[metrics['tn'], metrics['fp']], 
+          [metrics['fn'], metrics['tp']]]
     fig.add_trace(
-        go.Bar(x=metrics_labels, y=metrics_values, 
-               marker=dict(color=['green', 'blue', 'orange', 'purple'])),
+        go.Heatmap(
+            z=cm,
+            x=['Predicted Benign', 'Predicted Attack'],
+            y=['Actual Benign', 'Actual Attack'],
+            text=cm,
+            texttemplate='%{text}',
+            textfont={"size": 16},
+            colorscale='Blues',
+            showscale=False
+        ),
         row=3, col=1
     )
     
+    # 7. Attack Distribution Pie (Row 3, Col 2)
     if 'is_attack' in df.columns:
         attack_counts = df['is_attack'].value_counts()
         fig.add_trace(
-            go.Pie(labels=['Benign', 'Attack'], 
-                  values=[attack_counts.get(False, 0), attack_counts.get(True, 0)]),
+            go.Pie(
+                labels=['Benign Traffic', 'Attack Traffic'],
+                values=[attack_counts.get(False, 0), attack_counts.get(True, 0)],
+                marker=dict(colors=[colors['benign'], colors['attack']]),
+                hole=0.4,
+                textinfo='label+percent',
+                showlegend=False
+            ),
             row=3, col=2
         )
     
-    fig.update_layout(
-        title_text="DDoS Detection Dashboard",
-        showlegend=True,
-        height=1200,
-        template='plotly_white'
+    # 8. ROC-like Analysis (Row 3, Col 3)
+    # Plot true positive rate vs false positive rate
+    tpr = metrics['recall']
+    fpr = metrics['fpr']
+    fig.add_trace(
+        go.Scatter(
+            x=[0, fpr, 1],
+            y=[0, tpr, 1],
+            mode='lines+markers',
+            name='Detection Performance',
+            line=dict(color=colors['info'], width=3),
+            marker=dict(size=[8, 12, 8]),
+            fill='tozeroy',
+            fillcolor=f"rgba(59, 130, 246, 0.2)"
+        ),
+        row=3, col=3
+    )
+    # Add diagonal reference line
+    fig.add_trace(
+        go.Scatter(
+            x=[0, 1],
+            y=[0, 1],
+            mode='lines',
+            name='Random Classifier',
+            line=dict(color='gray', width=1, dash='dash'),
+            showlegend=False
+        ),
+        row=3, col=3
     )
     
-    fig.write_html(output_path)
-    logging.info(f"Dashboard saved to {output_path}")
+    # 9. Temporal Attack Pattern (Row 4, Col 1-2)
+    # Bin attacks over time
+    window_size = len(sample_indices) // 20
+    attack_windows = []
+    for i in range(0, len(sample_indices), window_size):
+        end = min(i + window_size, len(sample_indices))
+        window_attacks = np.sum(predictions[sample_indices[i:end]])
+        attack_windows.append(window_attacks)
+    
+    window_indices = range(len(attack_windows))
+    fig.add_trace(
+        go.Scatter(
+            x=list(window_indices),
+            y=attack_windows,
+            mode='lines+markers',
+            name='Attacks per Window',
+            line=dict(color=colors['danger'], width=2),
+            marker=dict(size=8),
+            fill='tozeroy',
+            fillcolor=f"rgba(239, 68, 68, 0.3)"
+        ),
+        row=4, col=1
+    )
+    
+    # 10. Detection Confidence Gauge (Row 4, Col 3)
+    confidence = metrics['f1']
+    fig.add_trace(
+        go.Indicator(
+            mode="gauge+number+delta",
+            value=confidence * 100,
+            title={'text': "Detection Confidence<br><span style='font-size:0.8em'>F1 Score</span>"},
+            delta={'reference': 85},
+            gauge={
+                'axis': {'range': [None, 100]},
+                'bar': {'color': colors['primary']},
+                'steps': [
+                    {'range': [0, 60], 'color': colors['danger']},
+                    {'range': [60, 80], 'color': colors['warning']},
+                    {'range': [80, 100], 'color': colors['success']}
+                ],
+                'threshold': {
+                    'line': {'color': "red", 'width': 4},
+                    'thickness': 0.75,
+                    'value': 90
+                }
+            }
+        ),
+        row=4, col=3
+    )
+    
+    # Update layout with modern styling
+    fig.update_layout(
+        title={
+            'text': '<b>DDoS Attack Detection Dashboard</b><br><sub>Real-time Network Traffic Analysis</sub>',
+            'x': 0.5,
+            'xanchor': 'center',
+            'font': {'size': 28, 'color': colors['text']}
+        },
+        showlegend=True,
+        height=1800,
+        template='plotly_white',
+        paper_bgcolor=colors['background'],
+        plot_bgcolor='white',
+        font=dict(family="Segoe UI, Arial, sans-serif", size=12, color=colors['text']),
+        legend=dict(
+            orientation="h",
+            yanchor="bottom",
+            y=1.02,
+            xanchor="right",
+            x=1,
+            bgcolor="rgba(255,255,255,0.8)"
+        )
+    )
+    
+    # Update axes
+    fig.update_xaxes(showgrid=True, gridwidth=1, gridcolor='rgba(0,0,0,0.1)')
+    fig.update_yaxes(showgrid=True, gridwidth=1, gridcolor='rgba(0,0,0,0.1)')
+    
+    # Create HTML with custom CSS
+    html_string = f'''
+    <!DOCTYPE html>
+    <html>
+    <head>
+        <meta charset="utf-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1">
+        <title>DDoS Detection Dashboard</title>
+        <style>
+            * {{
+                margin: 0;
+                padding: 0;
+                box-sizing: border-box;
+            }}
+            
+            body {{
+                font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+                background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+                padding: 20px;
+                min-height: 100vh;
+            }}
+            
+            .container {{
+                max-width: 1600px;
+                margin: 0 auto;
+                background: white;
+                border-radius: 20px;
+                box-shadow: 0 20px 60px rgba(0,0,0,0.3);
+                overflow: hidden;
+            }}
+            
+            .header {{
+                background: linear-gradient(135deg, {colors['primary']} 0%, #1e40af 100%);
+                color: white;
+                padding: 40px;
+                text-align: center;
+            }}
+            
+            .header h1 {{
+                font-size: 2.5em;
+                margin-bottom: 10px;
+                font-weight: 700;
+            }}
+            
+            .header p {{
+                font-size: 1.1em;
+                opacity: 0.9;
+            }}
+            
+            .metrics-grid {{
+                display: grid;
+                grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+                gap: 20px;
+                padding: 30px;
+                background: {colors['background']};
+            }}
+            
+            .metric-card {{
+                background: white;
+                border-radius: 15px;
+                padding: 25px;
+                box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+                border-left: 4px solid;
+                transition: transform 0.2s, box-shadow 0.2s;
+            }}
+            
+            .metric-card:hover {{
+                transform: translateY(-5px);
+                box-shadow: 0 8px 12px rgba(0,0,0,0.15);
+            }}
+            
+            .metric-card.success {{ border-color: {colors['success']}; }}
+            .metric-card.info {{ border-color: {colors['info']}; }}
+            .metric-card.warning {{ border-color: {colors['warning']}; }}
+            .metric-card.danger {{ border-color: {colors['danger']}; }}
+            
+            .metric-label {{
+                font-size: 0.9em;
+                color: #64748b;
+                text-transform: uppercase;
+                letter-spacing: 0.5px;
+                margin-bottom: 10px;
+            }}
+            
+            .metric-value {{
+                font-size: 2.5em;
+                font-weight: 700;
+                color: {colors['text']};
+                line-height: 1;
+            }}
+            
+            .metric-suffix {{
+                font-size: 0.5em;
+                color: #94a3b8;
+                margin-left: 5px;
+            }}
+            
+            .dashboard-content {{
+                padding: 30px;
+            }}
+            
+            .info-box {{
+                background: #f1f5f9;
+                border-left: 4px solid {colors['info']};
+                border-radius: 8px;
+                padding: 20px;
+                margin: 20px 30px;
+            }}
+            
+            .info-box h3 {{
+                color: {colors['primary']};
+                margin-bottom: 10px;
+            }}
+            
+            .info-box p {{
+                color: {colors['text']};
+                line-height: 1.6;
+            }}
+            
+            .footer {{
+                background: {colors['text']};
+                color: white;
+                text-align: center;
+                padding: 20px;
+                font-size: 0.9em;
+            }}
+            
+            @media (max-width: 768px) {{
+                .metrics-grid {{
+                    grid-template-columns: 1fr;
+                }}
+                
+                .header h1 {{
+                    font-size: 1.8em;
+                }}
+            }}
+        </style>
+    </head>
+    <body>
+        <div class="container">
+            <div class="header">
+                <h1>🛡️ DDoS Attack Detection Dashboard</h1>
+                <p>Real-time Network Traffic Analysis & Threat Detection</p>
+            </div>
+            
+            <div class="metrics-grid">
+                <div class="metric-card success">
+                    <div class="metric-label">Accuracy</div>
+                    <div class="metric-value">{metrics['accuracy']*100:.1f}<span class="metric-suffix">%</span></div>
+                </div>
+                <div class="metric-card info">
+                    <div class="metric-label">Precision</div>
+                    <div class="metric-value">{metrics['precision']*100:.1f}<span class="metric-suffix">%</span></div>
+                </div>
+                <div class="metric-card warning">
+                    <div class="metric-label">Recall</div>
+                    <div class="metric-value">{metrics['recall']*100:.1f}<span class="metric-suffix">%</span></div>
+                </div>
+                <div class="metric-card danger">
+                    <div class="metric-label">F1 Score</div>
+                    <div class="metric-value">{metrics['f1']*100:.1f}<span class="metric-suffix">%</span></div>
+                </div>
+                <div class="metric-card info">
+                    <div class="metric-label">False Positive Rate</div>
+                    <div class="metric-value">{metrics['fpr']*100:.1f}<span class="metric-suffix">%</span></div>
+                </div>
+                <div class="metric-card success">
+                    <div class="metric-label">Total Samples</div>
+                    <div class="metric-value">{len(df):,}</div>
+                </div>
+                <div class="metric-card danger">
+                    <div class="metric-label">Attacks Detected</div>
+                    <div class="metric-value">{np.sum(predictions):,}</div>
+                </div>
+                <div class="metric-card warning">
+                    <div class="metric-label">Detection Rate</div>
+                    <div class="metric-value">{(np.sum(predictions)/len(df)*100):.1f}<span class="metric-suffix">%</span></div>
+                </div>
+            </div>
+            
+            <div class="info-box">
+                <h3>📊 Detection Summary</h3>
+                <p>
+                    <strong>Analysis Status:</strong> {'✅ High Confidence' if metrics['f1'] > 0.85 else '⚠️ Moderate Confidence' if metrics['f1'] > 0.70 else '❌ Low Confidence'}<br>
+                    <strong>True Positives:</strong> {metrics['tp']:,} attacks correctly identified<br>
+                    <strong>False Positives:</strong> {metrics['fp']:,} benign traffic incorrectly flagged<br>
+                    <strong>True Negatives:</strong> {metrics['tn']:,} benign traffic correctly identified<br>
+                    <strong>False Negatives:</strong> {metrics['fn']:,} attacks missed<br>
+                </p>
+            </div>
+            
+            <div class="dashboard-content">
+                {fig.to_html(include_plotlyjs='cdn', div_id='plotly-dashboard')}
+            </div>
+            
+            <div class="info-box">
+                <h3>ℹ️ About This Dashboard</h3>
+                <p>
+                    This dashboard visualizes DDoS attack detection results using statistical threshold-based analysis 
+                    on the CICIDS2017 dataset. The system monitors network traffic patterns, calculates anomaly scores, 
+                    and flags potential attacks in real-time. Charts show traffic volume, entropy analysis, detection 
+                    timeline, and performance metrics to provide comprehensive insights into network security status.
+                </p>
+            </div>
+            
+            <div class="footer">
+                <p>DDoS Detection System | Manipal University Jaipur | © 2024</p>
+                <p style="margin-top: 5px; opacity: 0.7;">Student: Ankit Meher | Supervisor: Dr. Susheela Vishnoi</p>
+            </div>
+        </div>
+    </body>
+    </html>
+    '''
+    
+    with open(output_path, 'w', encoding='utf-8') as f:
+        f.write(html_string)
+    
+    logging.info(f"Enhanced dashboard saved to {output_path}")
     return output_path
 
 def full_pipeline(csv_path, adaptive=True):
